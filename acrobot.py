@@ -122,7 +122,6 @@ if method == "ilqr":
     # Set initial guess
     u_guess = np.zeros((1,num_steps-1))
 
-
     if MPC:
         # MPC parameters
         num_resolves = 50    # total number of times to resolve the optimizaiton problem
