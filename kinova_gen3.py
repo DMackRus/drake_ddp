@@ -20,7 +20,7 @@ playback = True    # Visualize the optimal trajectory by playing it back.
                    # If optimize=False, attempts to load a previously saved
                    # trajectory from a file.
 
-scenario = "side"   # "lift", "forward", or "side"
+scenario = "forward"   # "lift", "forward", or "side"
 save_file = scenario + ".npz"
 
 meshcat_visualisation = False
@@ -30,16 +30,16 @@ meshcat_visualisation = False
 ####################################
 
 T = 0.5
-dt = 1e-2
+dt = 1e-2 # 0.01
 playback_rate = 0.125
 
 # Parameters for derivative interpolation
-use_derivative_interpolation = False    # Use derivative interpolation
-keypoint_method = 'adaptiveJerk'            # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
+use_derivative_interpolation = True        # Use derivative interpolation
+keypoint_method = 'setInterval'             # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
 minN = 5                                    # Minimum interval between key-points   
-maxN = 40                                   # Maximum interval between key-points
-jerk_threshold = 1e-4                       # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
-iterative_error_threshold = 1e-2            # Error threshold to trigger new key-point (only used in iterativeError)
+maxN = 20                                   # Maximum interval between key-points
+jerk_threshold = 1e-1                       # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
+iterative_error_threshold = 1000            # Error threshold to trigger new key-point (only used in iterativeError)
 
 # Some useful joint angle definitions
 q_home = np.pi/180*np.array([0, 15, 180, 230, 0, 55, 90])
@@ -49,11 +49,11 @@ q_wrap = np.pi/180*np.array([55, 125, 114, 244, 217, 45, 8])
 
 # Some useful ball pose definitions
 radius = 0.1   # of ball
-q_ball_start = np.array([0,0,0,1,0.6,0.0,radius])
+q_ball_start = np.array([0,0,0,1,0.6,0.0,radius]) # initial settings from vince
 q_ball_target = np.array([0,0,0,1,0.6,0.0,radius])
 if scenario == "lift":
     q_ball_start[4] = 0.155  # ball starts close to the base
-    q_ball_target[6] += 0.2   # goal is to lift it in the air
+    q_ball_target[6] += 0.3   # goal is to lift it in the air
 elif scenario == "forward":
     q_ball_target[4] += 0.2   # goal is to move the ball forward
 elif scenario == "side":
@@ -250,19 +250,29 @@ if optimize:
 
     # Set up the optimizer
     num_steps = int(T/dt)
+
     
     if use_derivative_interpolation:
-        interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
+        # interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
+
+        interpolation_methods = []
+        # minN = [1, 5, 20]
+        minN = [1]
+        for i in range(len(minN)):
+            _interpolation_method = utils_derivs_interpolation.derivs_interpolation("setInterval", minN[i], 0, 0, 0)
+            interpolation_methods.append(_interpolation_method)
     else:
-        interpolation_method = None
+        interpolation_methods = None
+
     ilqr = IterativeLinearQuadraticRegulator(system_, num_steps, 
-            beta=0.5, delta=1e-3, gamma=0, derivs_keypoint_method = interpolation_method)
+            beta=0.5, delta=1e-3, gamma=0, derivs_keypoint_methods = interpolation_methods)
 
     # Define the optimization problem
     ilqr.SetInitialState(x0)
     ilqr.SetTargetState(x_nom)
     ilqr.SetRunningCost(dt*Q, dt*R)
     ilqr.SetTerminalCost(Qf)
+    ilqr.SetTaskName("kinova_" + scenario)
 
     # Set initial guess
     plant.SetPositionsAndVelocities(plant_context, x0)
@@ -275,7 +285,7 @@ if optimize:
     ilqr.SetInitialGuess(u_guess)
 
     # Solve the optimization problem
-    states, inputs, solve_time, optimal_cost = ilqr.Solve()
+    states, inputs, solve_time, optimal_cost, cost_reduction, num_iteration, avg_percent_deriv = ilqr.Solve()
     print(f"Solved in {solve_time} seconds using iLQR")
     print(f"Optimal cost: {optimal_cost}")
     timesteps = np.arange(0.0,T,dt)

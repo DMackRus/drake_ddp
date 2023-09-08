@@ -12,6 +12,8 @@ import numpy as np
 from pydrake.all import *
 from ilqr import IterativeLinearQuadraticRegulator
 import utils_derivs_interpolation
+import IPython
+import csv
 
 meshcat_visualisation = False
 
@@ -25,12 +27,13 @@ playback_rate = 0.2
 target_vel = 1.00   # m/s
 
 # Parameters for derivative interpolation
-use_derivative_interpolation = False    # Use derivative interpolation
-keypoint_method = 'adaptiveJerk'        # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
+method_name = "iterError_1-5-10"
+use_derivative_interpolation = True     # Use derivative interpolation
+keypoint_method = 'setInterval'         # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
 minN = 2                                # Minimum interval between key-points   
 maxN = 20                               # Maximum interval between key-points
 jerk_threshold = 0.3                    # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
-iterative_error_threshold = 10          # Error threshold to trigger new key-point (only used in iterativeError)
+iterative_error_threshold = 10000       # Error threshold to trigger new key-point (only used in iterativeError)
 
 # MPC parameters
 num_resolves = 100  # total number of times to resolve the optimizaiton problem
@@ -155,18 +158,28 @@ def solve_ilqr(solver, x0, u_guess, move_target=False):
         x_nom[4] += target_vel*delta_t
         solver.SetTargetState(x_nom)
 
-    states, inputs, solve_time, optimal_cost = solver.Solve()
-    return states, inputs, solve_time, optimal_cost
+    states, inputs, solve_time, optimal_cost, cost_reduction, num_iterations, avg_percent_derivs = solver.Solve()
+    return states, inputs, solve_time, optimal_cost, num_iterations
 
 # Set up the optimizer
 num_steps = int(T/dt)
 
+#Setup testing loop
+
 if use_derivative_interpolation:
-    interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
+    # interpolation_methods = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
+
+    interpolation_methods = []
+    minN = [1, 5, 20]
+    maxN = [2, 10, 20]
+    iter_errors = [0.2, 10, 10]
+    for i in range(len(minN)):
+        # interpolation_methods.append(utils_derivs_interpolation.derivs_interpolation("setInterval", minN[i], 0, 0, 0))
+        interpolation_methods.append(utils_derivs_interpolation.derivs_interpolation("iterativeError", minN[i], maxN[i], 0, iter_errors[i]))
 else:
     interpolation_method = None
 ilqr = IterativeLinearQuadraticRegulator(system_, num_steps, 
-        beta=0.5, delta=1e-2, gamma=0, derivs_keypoint_method=interpolation_method)
+        beta=0.5, delta=1e-2, gamma=0, derivs_keypoint_methods=interpolation_methods)
 
 # Define the optimization problem
 ilqr.SetTargetState(x_nom)
@@ -183,7 +196,11 @@ states = np.zeros((plant.num_multibody_states(),total_num_steps))
 
 # Solve to get an initial trajectory
 st = time.time()
-x, u, _, _ = solve_ilqr(ilqr, x0, u_guess)
+costs = []
+saved_iterations = []
+x, u, _, final_cost, num_iterations = solve_ilqr(ilqr, x0, u_guess)
+costs.append(final_cost)
+saved_iterations.append(num_iterations)
 states[:,0:num_steps] = x
 
 # Perform additional resolves in MPC-fashion
@@ -198,7 +215,14 @@ for i in range(num_resolves):
     x0 = x[:,replan_steps]
 
     # Resolve the optimization
-    x, u, _, _ = solve_ilqr(ilqr, x0, u_guess, move_target=True)
+    try:
+        x, u, _, final_cost, num_iterations = solve_ilqr(ilqr, x0, u_guess, move_target=True)
+    except:
+        print("iLQR failed to converge")
+        break
+
+    costs.append(final_cost)
+    saved_iterations.append(num_iterations)
 
     # Save the result for playback
     start_idx = (i+1)*replan_steps
@@ -215,6 +239,25 @@ for i in range(num_resolves):
 
 solve_time = time.time() - st
 print(f"Solved in {solve_time} seconds using iLQR")
+# IPython.embed()
+# cost = 0
+# for i in range(len(x)):
+#     cost += (x[:,i]-x_nom).T@Q@(x[:,i]-x_nom) + u[:,i].T@R@u[:,i]
+
+# print(f"Total cost: {cost}")
+print(f'costs {costs}')
+print(f'saved_iterations {saved_iterations}')
+sum_cost = np.sum(costs)
+avg_num_iterations = np.mean(saved_iterations)
+data = [solve_time, sum_cost, avg_num_iterations]
+f = open("cheetah_data/" + method_name + "_data.csv", 'w')
+# create the csv writer
+writer = csv.writer(f)
+# write a row to the csv file
+writer.writerow(data)
+# close the file
+f.close()
+
 timesteps = np.arange(0.0,total_T,dt)
 
 #####################################

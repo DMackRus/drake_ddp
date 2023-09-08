@@ -20,7 +20,7 @@ T = 3           # total simulation time (S)
 dt = 0.004      # simulation timestep
 
 # Parameters for derivative interpolation
-use_derivative_interpolation = False    # Use derivative interpolation
+use_derivative_interpolation = True    # Use derivative interpolation
 keypoint_method = 'adaptiveJerk'        # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
 minN = 5                                # Minimum interval between key-points   
 maxN = 100                              # Maximum interval between key-points
@@ -34,10 +34,13 @@ MPC = False                         # MPC only works with ilqr for now
 meshcat_visualisation = False        # Visualisation with meshcat or drake visualizer
 
 # Initial state
-x0 = np.array([0,0,0,0])
+# x0 = np.array([2, 1, 0,0])
+x0 = np.array([0, 0, 0,0])
 
 # Target state
 x_nom = np.array([np.pi,0,0,0])
+# x_nom = np.array([0,0,0,0])   # Fully down
+# x_nom = np.array([np.pi,np.pi,0,0])   # Half up
 
 # Quadratic cost int_{0^T} (x'Qx + u'Ru) + x_T*Qf*x_T
 Q = 0.01*np.diag([0,0,1,1])
@@ -104,7 +107,7 @@ def solve_ilqr(solver, x0, u_guess):
     solver.SetInitialState(x0)
     solver.SetInitialGuess(u_guess)
 
-    states, inputs, solve_time, optimal_cost = solver.Solve()
+    states, inputs, solve_time, optimal_cost, cost_reduction, num_iterations, avg_percent_derivs = solver.Solve()
     return states, inputs, solve_time, optimal_cost
 
 if method == "ilqr":
@@ -112,17 +115,26 @@ if method == "ilqr":
     num_steps = int(T/dt)
     
     if use_derivative_interpolation:
-        interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
+        # interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
+        interpolation_methods = []
+        # minN = [1, 5, 20]
+        minN = [1]
+        for i in range(len(minN)):
+            _interpolation_method = utils_derivs_interpolation.derivs_interpolation("setInterval", minN[i], 0, 0, 0)
+            interpolation_methods.append(_interpolation_method)
     else:
-        interpolation_method = None
+        interpolation_methods = None
+
+    print("interpolation_methods: ", interpolation_methods)
     ilqr = IterativeLinearQuadraticRegulator(plant_, num_steps, 
             input_port_index=input_port_index,
-            beta=0.5, derivs_keypoint_method = interpolation_method)
+            beta=0.5, derivs_keypoint_methods = interpolation_methods)
 
     # Define the problem
     ilqr.SetTargetState(x_nom)
     ilqr.SetRunningCost(dt*Q, dt*R)
     ilqr.SetTerminalCost(Qf)
+    ilqr.SetTaskName("acrobot")
 
     # Set initial guess
     u_guess = np.zeros((1,num_steps-1))

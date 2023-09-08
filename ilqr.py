@@ -8,6 +8,9 @@ from pydrake.all import *
 import time
 import numpy as np
 import utils_derivs_interpolation
+import csv
+import os
+import matplotlib.pyplot as plt
 
 class IterativeLinearQuadraticRegulator():
     """
@@ -19,7 +22,7 @@ class IterativeLinearQuadraticRegulator():
     using iLQR.
     """
     def __init__(self, system, num_timesteps, 
-            input_port_index=0, delta=1e-2, beta=0.95, gamma=0.0, derivs_keypoint_method = None):
+            input_port_index=0, delta=1e-2, beta=0.95, gamma=0.0, derivs_keypoint_methods = None):
         """
         Args:
             system:             Drake System describing the discrete-time dynamics
@@ -84,6 +87,11 @@ class IterativeLinearQuadraticRegulator():
 
         # -------------------------------- Derivatives interpolation  --------------------------------------
 
+        self.saveFileStartIndex = 77
+
+        self.fx_baseline = np.zeros((self.n,self.n,self.N-1))
+        self.fu_baseline = np.zeros((self.n,self.m,self.N-1))
+
         self.deriv_calculated_at_index = [False] * self.N
         self.time_getDerivs = 0
         self.percentage_derivs = 0
@@ -94,10 +102,17 @@ class IterativeLinearQuadraticRegulator():
         self.total_num_columns_derivs = self.N * self.n
 
         # If no derivs_interpolation specified - use the baseline case (setInterval1 - computing derivatives at every time-step)
-        if derivs_keypoint_method is None:
-            self.derivs_interpolation = utils_derivs_interpolation.derivs_interpolation('setInterval', 1, 0, 0, 0)
+        if derivs_keypoint_methods is None:
+            self.derivs_interpolation = [utils_derivs_interpolation.derivs_interpolation('setInterval', 1, 0, 0, 0)]
         else:
-            self.derivs_interpolation = derivs_keypoint_method
+            self.derivs_interpolation = derivs_keypoint_methods
+
+        self.initialCost = None
+        self.save_trajecInfo = True
+        self.taskName = "blankTask"
+
+    def SetTaskName(self, taskName):
+        self.taskName = taskName
 
     def SetInitialState(self, x0):
         """
@@ -157,6 +172,9 @@ class IterativeLinearQuadraticRegulator():
 
     def SetControlLimits(self, u_min, u_max):
         pass
+
+    def SetDerivativeInterpolator(self, derivs_interpolation):
+        self.derivs_interpolation = derivs_interpolation
 
     def _running_cost_partials(self, x, u):
         """
@@ -321,6 +339,10 @@ class IterativeLinearQuadraticRegulator():
                     #print(e)
                     L = np.inf
                     break
+                except:
+                    print("delta > 0 error - probably")
+                    L = np.inf
+                    break
 
                 L += (x[:,t]-self.x_nom).T@self.Q@(x[:,t]-self.x_nom) + u[:,t].T@self.R@u[:,t]
                 expected_improvement += -eps*(1-eps/2)*self.dV_coeff[t]
@@ -334,9 +356,11 @@ class IterativeLinearQuadraticRegulator():
             # Otherwise reduce eps by a factor of beta
             eps *= self.beta
 
-        raise RuntimeError("linesearch failed after %s iterations"%n_iters)
+        return 0, x, u, L, n_iters
+
+        # raise RuntimeError("linesearch failed after %s iterations"%n_iters)
     
-    def _forward_pass(self, L_last):
+    def _forward_pass(self, L_last, interpolation_method):
         """
         Simulate the system forward in time using the local feedback
         control law
@@ -344,7 +368,7 @@ class IterativeLinearQuadraticRegulator():
             u = u_bar - eps*kappa - K*(x-x_bar).
 
         Performs a linesearch on eps to (approximately) determine the 
-        largest value in (0,1] that results in a reduced cost. 
+        largest value in (0,1) that results in a reduced cost. 
 
         Args:
             L_last: Total loss from last iteration, used for linesearch
@@ -367,7 +391,7 @@ class IterativeLinearQuadraticRegulator():
         self.time_fp = timeEnd - timeStart
 
         timeStart = time.time()
-        self._get_derivatives(x, u)
+        self._get_derivatives(x, u, interpolation_method)
         timeEnd = time.time()
         self.time_getDerivs = timeEnd - timeStart
 
@@ -377,7 +401,7 @@ class IterativeLinearQuadraticRegulator():
 
         return L, eps, ls_iters
 
-    def _get_derivatives(self, x, u):
+    def _get_derivatives(self, x, u, interpolation_method):
         """
         Calculates the derivatives fx and fu over the entire trajectory. Depending on 
         the keypoint method specified, this function will calculate a set of keypoints.
@@ -389,16 +413,19 @@ class IterativeLinearQuadraticRegulator():
         Updates:
             fx:      dynamcis partial wrt state at each timestep
             fu:      dynamcis partial wrt control at each timestep
+
         """
+
+        DEBUG = False
 
         # Calculate keypoints over the trajectory
         keyPoints = []
-        if(self.derivs_interpolation.keypoint_method == 'setInterval'):
-            keyPoints = self.get_keypoints_set_interval()
-        elif(self.derivs_interpolation.keypoint_method == 'adaptiveJerk'):
-            keyPoints = self.get_keypoints_adaptive_jerk(x, u)
-        elif(self.derivs_interpolation.keypoint_method == 'iterativeError'):
-            keyPoints = self.get_keypoints_iterative_error(x, u)
+        if(interpolation_method.keypoint_method == 'setInterval'):
+            keyPoints = self.get_keypoints_set_interval(interpolation_method)
+        elif(interpolation_method.keypoint_method == 'adaptiveJerk'):
+            keyPoints = self.get_keypoints_adaptive_jerk(x, u, interpolation_method)
+        elif(interpolation_method.keypoint_method == 'iterativeError'):
+            keyPoints = self.get_keypoints_iterative_error(x, u, interpolation_method)
             self.deriv_calculated_at_index = [False] * self.N
         else:
             raise Exception('unknown interpolation method')
@@ -406,15 +433,33 @@ class IterativeLinearQuadraticRegulator():
         self.percentage_derivs = (len(keyPoints) / (self.N - 1)) * 100
 
         # Calculate derivatives at keypoints (iterative error method will have already done this)
-        if self.derivs_interpolation.keypoint_method != 'iterativeError':
+        if interpolation_method.keypoint_method != 'iterativeError':
             for t in range(len(keyPoints)):
                 self.fx[:,:,keyPoints[t]], self.fu[:,:,keyPoints[t]] = self._calc_dynamics_partials(x[:,keyPoints[t]], u[:,keyPoints[t]])
 
+
         # Interpolate derivatives if required (Interpolation not needed in baseline case (setInterval1))
-        if not (self.derivs_interpolation.keypoint_method == 'setInterval' and self.derivs_interpolation.minN == 1):
+        if not (interpolation_method.keypoint_method == 'setInterval' and interpolation_method.minN == 1):
             self.interpolate_derivatives(keyPoints)
 
-    def get_keypoints_set_interval(self):
+
+        if(DEBUG):
+            for t in range(self.N-1):
+                self.fx_baseline[:,:,t], self.fu_baseline[:,:,t] = self._calc_dynamics_partials(x[:,t], u[:,t])
+
+            indexX = self.n - 1
+            indexY = self.n - 1
+            
+            plt.plot(self.fx_baseline[indexX,indexY,:], label='fx_baseline')
+            plt.plot(self.fx[indexX,indexY,:], label='fx')
+            plt.show()
+
+            error = self._error_in_trajectory()
+            print("Error in trajectory: ", error)
+                
+
+
+    def get_keypoints_set_interval(self, interpolation_method):
         """
         Computes keypoints over the trajectory at set intervals as specified by the
         interpolation method
@@ -425,13 +470,13 @@ class IterativeLinearQuadraticRegulator():
 
         keypoints = []
 
-        keypoints = np.arange(0,self.N-1, self.derivs_interpolation.minN).astype(int)
+        keypoints = np.arange(0,self.N-1, interpolation_method.minN).astype(int)
         if keypoints[-1] != self.N-2:
             keypoints[-1] = self.N-2
 
         return keypoints
 
-    def get_keypoints_adaptive_jerk(self, x, u):
+    def get_keypoints_adaptive_jerk(self, x, u, interpolation_method):
         """
         Computes keypoints over the trajectory adaptively by looking at the jerk
         profile over the trajectory and changing the sample rate based on the jerk
@@ -450,14 +495,14 @@ class IterativeLinearQuadraticRegulator():
         for t in range(len(jerk_profile)):
             counter += 1
 
-            if counter >= self.derivs_interpolation.minN:
+            if counter >= interpolation_method.minN:
                 for i in range(dof):
-                    if jerk_profile[t, i] > self.derivs_interpolation.jerk_threshold:
+                    if jerk_profile[t, i] > interpolation_method.jerk_threshold:
                         keypoints.append(t)
                         counter = 0
                         break
             
-            if counter >= self.derivs_interpolation.maxN:
+            if counter >= interpolation_method.maxN:
                 keypoints.append(t)
                 counter = 0
 
@@ -485,7 +530,7 @@ class IterativeLinearQuadraticRegulator():
                 
         return jerk
 
-    def get_keypoints_iterative_error(self, x, u):
+    def get_keypoints_iterative_error(self, x, u, interpolation_method):
         """
         Calculates keypoints at which to calcualte derivatives by checking
         middle of the inteprolation versus the real value. If the approximation 
@@ -513,7 +558,7 @@ class IterativeLinearQuadraticRegulator():
             all_checks_passed = True
             for i in range(len(list_indices_to_check)):
 
-                approximation_good = self.check_one_matrix_error(list_indices_to_check[i], x, u)
+                approximation_good = self.check_one_matrix_error(list_indices_to_check[i], x, u, interpolation_method)
                 mid_index = int((list_indices_to_check[i].start_index + list_indices_to_check[i].end_index)/2)
 
                 if not approximation_good:
@@ -538,7 +583,7 @@ class IterativeLinearQuadraticRegulator():
 
         return keypoints
 
-    def check_one_matrix_error(self, indices, x, u):
+    def check_one_matrix_error(self, indices, x, u, interpolation_method):
         """
         Checks the mean sqaured sum error of two dynamics partials matrices
         If the error is above the set threshold, the approximation is bad 
@@ -554,7 +599,7 @@ class IterativeLinearQuadraticRegulator():
         """
         approximation_good = True
 
-        if(indices.end_index - indices.start_index <= self.derivs_interpolation.minN):
+        if(indices.end_index - indices.start_index <= interpolation_method.minN):
             return approximation_good
 
         start_index = indices.start_index
@@ -587,7 +632,7 @@ class IterativeLinearQuadraticRegulator():
 
         average_sq_diff = sumSqDiff / (2 * self.n)
 
-        if(average_sq_diff > self.derivs_interpolation.iterative_error_threshold):
+        if(average_sq_diff > interpolation_method.iterative_error_threshold):
             approximation_good = False
 
         return approximation_good
@@ -619,6 +664,27 @@ class IterativeLinearQuadraticRegulator():
             for j in range(startIndex, endIndex):
                 self.fx[:,:,j] = startVals_fx + (endVals_fx - startVals_fx) * (j - startIndex) / (endIndex - startIndex)
                 self.fu[:,:,j] = startVals_fu + (endVals_fu - startVals_fu) * (j - startIndex) / (endIndex - startIndex)
+
+    def _error_in_trajectory(self):
+        error = 0.0
+
+        for t in range(self.N - 1):
+            error += self._one_matrix_error(self.fx[:,:,t], self.fx_baseline[:,:,t])
+
+
+        return error
+
+    def _one_matrix_error(self, matrix1, matrix2):
+        error = 0.0
+
+        for i in range(self.n):
+            for j in range(self.n):
+                error += (matrix1[i,j] - matrix2[i,j])**2
+
+        error /= (self.n * self.n)
+
+
+        return error
     
     def _backward_pass(self):
         """
@@ -687,12 +753,43 @@ class IterativeLinearQuadraticRegulator():
         print("----------------------------------------------------------------------------------------------------------------------------------")
 
         # iteration counter
-        i = 1
+        i = 0
+        print(self.derivs_interpolation)
+        print(f' number of interpolation methods: {len(self.derivs_interpolation)}')
+
+        outer_loop_derivs_method_counter = len(self.derivs_interpolation) - 1
+
         st = time.time()
+        percentage_derivs = []
+
+        while outer_loop_derivs_method_counter >= 0:
+            print(f' before interpolation method: {outer_loop_derivs_method_counter}')
+            L, _percentage_derivs, i = self.inner_loop_optimisation(self.derivs_interpolation[outer_loop_derivs_method_counter], L, improvement, i, st)
+            percentage_derivs += _percentage_derivs
+
+            # Go to a more accurate approximation
+            outer_loop_derivs_method_counter -= 1
+
+        cost_reduction = 1 - (L / self.initialCost)
+        total_time = time.time() - st
+        print(percentage_derivs)
+
+        avg_percent_derivs = sum(percentage_derivs) / len(percentage_derivs)
+
+        return self.x_bar, self.u_bar, total_time, L, cost_reduction, i, avg_percent_derivs
+
+    def inner_loop_optimisation(self, interpolation_method, L, improvement, iteration_num, st):
+        percent_derivs = []
         while improvement > self.delta:
             st_iter = time.time()
 
-            L_new, eps, ls_iters = self._forward_pass(L)
+            L_new, eps, ls_iters = self._forward_pass(L, interpolation_method)
+            if(self.initialCost == None):
+                self.initialCost = L_new
+
+            if self.save_trajecInfo:
+                self.saveTrajecInfo(self.taskName, iteration_num, self.fx, self.fu, self.x_bar, self.u_bar)
+
             bp_time_start = time.time()
             self._backward_pass()
             bp_end_time = time.time()
@@ -701,13 +798,14 @@ class IterativeLinearQuadraticRegulator():
             iter_time = time.time() - st_iter
             total_time = time.time() - st
 
-            print(f"{i:^14}{L_new:11.4f}  {eps:^12.4f}{ls_iters:^11}   {self.time_getDerivs:1.5f}         {self.percentage_derivs:.1f}       {self.time_backwardsPass:1.5f}    {self.time_fp:1.5f}      {iter_time:1.5f}          {total_time:4.2f}")
+            print(f"{iteration_num:^14}{L_new:11.4f}  {eps:^12.4f}{ls_iters:^11}   {self.time_getDerivs:1.5f}         {self.percentage_derivs:.1f}       {self.time_backwardsPass:1.5f}    {self.time_fp:1.5f}      {iter_time:1.5f}          {total_time:4.2f}")
+            percent_derivs.append(self.percentage_derivs)
 
             improvement = L - L_new
             L = L_new
-            i += 1
+            iteration_num += 1
 
-        return self.x_bar, self.u_bar, total_time, L
+        return L, percent_derivs, iteration_num
 
     def SaveSolution(self, fname):
         """
@@ -731,3 +829,68 @@ class IterativeLinearQuadraticRegulator():
         K = self.K
 
         np.savez(fname, t=t, x_bar=x_bar, u_bar=u_bar, K=K)
+
+    def saveTrajecInfo(self, task, index, A, B, x, u):
+        """
+        Save the trajectory information for a given 
+        """
+        save_index = index + self.saveFileStartIndex
+
+        base_folder_name = f"savedTrajecInfo/{task}/{save_index}"
+
+        if(not os.path.exists(base_folder_name)):
+            os.makedirs(base_folder_name)
+
+        trajecLength = A.shape[2]
+
+        # reshape matrices
+        # drop the top half of the matrices
+        topHalfIndex = int(ceil(self.n/2))
+        A = A[topHalfIndex:,:,:]
+        B = B[topHalfIndex:,:,:]
+        # reshape to 1D
+        A = A.reshape(-1, A.shape[-1])
+        B = B.reshape(-1, B.shape[-1])
+
+        A = A.transpose()
+        B = B.transpose()
+        x = x.transpose()
+        u = u.transpose()
+
+        custom_delimiter = ','
+
+        # Save A matrices
+        file_name = base_folder_name + '/A_matrices.csv'
+
+        formatted_data = "\n".join([",".join(map(str, row)) + "," for row in A])
+
+        # Write the formatted data to the CSV file
+        with open(file_name, 'w') as file:
+            file.write(formatted_data)
+
+        # Save B matrices
+        file_name = base_folder_name + '/B_matrices.csv'
+
+        formatted_data = "\n".join([",".join(map(str, row)) + "," for row in B])
+
+        # Write the formatted data to the CSV file
+        with open(file_name, 'w') as file:
+            file.write(formatted_data)
+
+        # Save controls
+        file_name = base_folder_name + '/controls.csv'
+
+        formatted_data = "\n".join([",".join(map(str, row)) + "," for row in u])
+
+        # Write the formatted data to the CSV file
+        with open(file_name, 'w') as file:
+            file.write(formatted_data)
+
+        # Save states
+        file_name = base_folder_name + '/states.csv'
+
+        formatted_data = "\n".join([",".join(map(str, row)) + "," for row in x])
+
+        # Write the formatted data to the CSV file
+        with open(file_name, 'w') as file:
+            file.write(formatted_data)
