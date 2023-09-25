@@ -1,3 +1,6 @@
 __pycache__
 *.swp
 *.npz
+
+# Ignore saved tajec info folder
+savedTrajecInfo/**

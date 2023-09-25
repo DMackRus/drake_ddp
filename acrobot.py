@@ -115,13 +115,7 @@ if method == "ilqr":
     num_steps = int(T/dt)
     
     if use_derivative_interpolation:
-        # interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
-        interpolation_methods = []
-        # minN = [1, 5, 20]
-        minN = [1]
-        for i in range(len(minN)):
-            _interpolation_method = utils_derivs_interpolation.derivs_interpolation("setInterval", minN[i], 0, 0, 0)
-            interpolation_methods.append(_interpolation_method)
+        interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)]
     else:
         interpolation_methods = None
 

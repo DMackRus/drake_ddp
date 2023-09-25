@@ -35,7 +35,7 @@ playback = True    # Visualize the optimal trajectory by playing it back.
                    # If optimize=False, attempts to load a previously saved
                    # trajectory from a file.
 
-scenario = "forward"   # "lift", "forward", or "side"
+scenario = "lift"   # "lift", "forward", or "side"
 save_file = scenario + ".npz"
 
 meshcat_visualisation = False
@@ -272,11 +272,18 @@ if optimize:
         interpolation_method = None
     
 
-    method_names = ["Baseline", "SI_1-5-20", "adapJerk_1-5-20", "IE_1-5-20"]
+    # method_names = ["Baseline", "SI_1-5-20", "adapJerk_1-5-20", "IE_1-5-20"]
+    # methods = [[utils_derivs_interpolation.derivs_interpolation("setInterval", 1, 0, 0, 0)],
+    #             [utils_derivs_interpolation.derivs_interpolation("setInterval", 1, 0, 0, 0), utils_derivs_interpolation.derivs_interpolation("setInterval", 5, 0, 0, 0), utils_derivs_interpolation.derivs_interpolation("setInterval", 20, 0, 0, 0)],
+    #             [utils_derivs_interpolation.derivs_interpolation("adaptiveJerk", 1, 10, 1e-2, 0), utils_derivs_interpolation.derivs_interpolation("adaptiveJerk", 5, 40, 1e-1, 0), utils_derivs_interpolation.derivs_interpolation("adaptiveJerk", 20, 40, 1e-1, 0)],
+    #             [utils_derivs_interpolation.derivs_interpolation("iterativeError", 1, 0, 0, 1), utils_derivs_interpolation.derivs_interpolation("iterativeError", 2, 0, 0, 1), utils_derivs_interpolation.derivs_interpolation("iterativeError", 5, 0, 0, 1)]]
+
+    method_names = ["Baseline", "SI5", "SI20", "adaptiveJerk", "iterative_error"]
     methods = [[utils_derivs_interpolation.derivs_interpolation("setInterval", 1, 0, 0, 0)],
-                [utils_derivs_interpolation.derivs_interpolation("setInterval", 1, 0, 0, 0), utils_derivs_interpolation.derivs_interpolation("setInterval", 5, 0, 0, 0), utils_derivs_interpolation.derivs_interpolation("setInterval", 20, 0, 0, 0)],
-                [utils_derivs_interpolation.derivs_interpolation("adaptiveJerk", 1, 10, 1e-2, 0), utils_derivs_interpolation.derivs_interpolation("adaptiveJerk", 5, 40, 1e-1, 0), utils_derivs_interpolation.derivs_interpolation("adaptiveJerk", 20, 40, 1e-1, 0)],
-                [utils_derivs_interpolation.derivs_interpolation("iterativeError", 1, 0, 0, 1), utils_derivs_interpolation.derivs_interpolation("iterativeError", 2, 0, 0, 1), utils_derivs_interpolation.derivs_interpolation("iterativeError", 5, 0, 0, 1)]]
+                [utils_derivs_interpolation.derivs_interpolation("setInterval", 5, 0, 0, 0)],
+                [utils_derivs_interpolation.derivs_interpolation("setInterval", 20, 0, 0, 0)],
+                [utils_derivs_interpolation.derivs_interpolation("adaptiveJerk", 1, 20, 0.1, 0)],
+                [utils_derivs_interpolation.derivs_interpolation("iterativeError", 1, 0, 0, 10)]]
 
 
     opt_times = []
@@ -319,7 +326,9 @@ if optimize:
     # cost_reductions = [0.8, 0.7, 0.7, 0.7]
     # num_iterations = [10, 20, 30, 40]
     # avg_percent_derivs = [0.1, 0.2, 0.3, 0.4]
-    plot_single("kinova_" + scenario, method_names, opt_times, cost_reductions, num_iterations, avg_percent_derivs)
+    save_data_open_loop(method_names, opt_times, cost_reductions, avg_percent_derivs, num_iterations, "kinova_" + scenario)
+
+    plot_open_loop_data("kinova_" + scenario, method_names, opt_times, cost_reductions, num_iterations, avg_percent_derivs)
 
     # save the solution
     ilqr.SaveSolution(save_file)

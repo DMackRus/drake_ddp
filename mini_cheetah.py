@@ -28,8 +28,8 @@ target_vel = 1.00   # m/s
 
 # Parameters for derivative interpolation
 method_name = "iterError_1-5-10"
-use_derivative_interpolation = True     # Use derivative interpolation
-keypoint_method = 'setInterval'         # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
+use_derivative_interpolation = False     # Use derivative interpolation
+keypoint_method = 'adaptiveJerk'         # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
 minN = 2                                # Minimum interval between key-points   
 maxN = 20                               # Maximum interval between key-points
 jerk_threshold = 0.3                    # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
@@ -167,17 +167,17 @@ num_steps = int(T/dt)
 #Setup testing loop
 
 if use_derivative_interpolation:
-    # interpolation_methods = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
+    interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)]
 
-    interpolation_methods = []
-    minN = [1, 5, 20]
-    maxN = [2, 10, 20]
-    iter_errors = [0.2, 10, 10]
-    for i in range(len(minN)):
-        # interpolation_methods.append(utils_derivs_interpolation.derivs_interpolation("setInterval", minN[i], 0, 0, 0))
-        interpolation_methods.append(utils_derivs_interpolation.derivs_interpolation("iterativeError", minN[i], maxN[i], 0, iter_errors[i]))
+    # interpolation_methods = []
+    # minN = [1, 5, 20]
+    # maxN = [2, 10, 20]
+    # iter_errors = [0.2, 10, 10]
+    # for i in range(len(minN)):
+    #     # interpolation_methods.append(utils_derivs_interpolation.derivs_interpolation("setInterval", minN[i], 0, 0, 0))
+    #     interpolation_methods.append(utils_derivs_interpolation.derivs_interpolation("iterativeError", minN[i], maxN[i], 0, iter_errors[i]))
 else:
-    interpolation_method = None
+    interpolation_methods = None
 ilqr = IterativeLinearQuadraticRegulator(system_, num_steps, 
         beta=0.5, delta=1e-2, gamma=0, derivs_keypoint_methods=interpolation_methods)
 

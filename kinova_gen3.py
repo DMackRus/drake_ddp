@@ -20,7 +20,7 @@ playback = True    # Visualize the optimal trajectory by playing it back.
                    # If optimize=False, attempts to load a previously saved
                    # trajectory from a file.
 
-scenario = "forward"   # "lift", "forward", or "side"
+scenario = "side"   # "lift", "forward", or "side"
 save_file = scenario + ".npz"
 
 meshcat_visualisation = False
@@ -34,11 +34,11 @@ dt = 1e-2 # 0.01
 playback_rate = 0.125
 
 # Parameters for derivative interpolation
-use_derivative_interpolation = True        # Use derivative interpolation
-keypoint_method = 'setInterval'             # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
-minN = 5                                    # Minimum interval between key-points   
-maxN = 20                                   # Maximum interval between key-points
-jerk_threshold = 1e-1                       # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
+use_derivative_interpolation = True         # Use derivative interpolation
+keypoint_method = 'adaptiveJerk'            # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
+minN = 1                                    # Minimum interval between key-points   
+maxN = 5                                   # Maximum interval between key-points
+jerk_threshold = 1e-1                      # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
 iterative_error_threshold = 1000            # Error threshold to trigger new key-point (only used in iterativeError)
 
 # Some useful joint angle definitions
@@ -253,14 +253,8 @@ if optimize:
 
     
     if use_derivative_interpolation:
-        # interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
+        interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)]
 
-        interpolation_methods = []
-        # minN = [1, 5, 20]
-        minN = [1]
-        for i in range(len(minN)):
-            _interpolation_method = utils_derivs_interpolation.derivs_interpolation("setInterval", minN[i], 0, 0, 0)
-            interpolation_methods.append(_interpolation_method)
     else:
         interpolation_methods = None
 
@@ -288,6 +282,7 @@ if optimize:
     states, inputs, solve_time, optimal_cost, cost_reduction, num_iteration, avg_percent_deriv = ilqr.Solve()
     print(f"Solved in {solve_time} seconds using iLQR")
     print(f"Optimal cost: {optimal_cost}")
+    print(f"Cost reduction: {cost_reduction}")
     timesteps = np.arange(0.0,T,dt)
 
     # save the solution
