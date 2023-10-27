@@ -21,11 +21,12 @@ dt = 0.004      # simulation timestep
 
 # Parameters for derivative interpolation
 use_derivative_interpolation = True    # Use derivative interpolation
-keypoint_method = 'adaptiveJerk'        # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
+keypoint_method = 'magvelChange'        # 'setInterval, or 'adaptiveJerk' or 'iterativeError' or 'magvelChange'
 minN = 5                                # Minimum interval between key-points   
 maxN = 100                              # Maximum interval between key-points
 jerk_threshold = 0.0007                 # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
 iterative_error_threshold = 0.00005     # Error threshold to trigger new key-point (only used in iterativeError)
+magvel_change_threshold = 0.5 
 
 # Solver method
 # must be "ilqr" or "sqp"
@@ -115,7 +116,7 @@ if method == "ilqr":
     num_steps = int(T/dt)
     
     if use_derivative_interpolation:
-        interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)]
+        interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold, magvel_change_threshold)]
     else:
         interpolation_methods = None
 

@@ -27,13 +27,14 @@ playback_rate = 0.2
 target_vel = 1.00   # m/s
 
 # Parameters for derivative interpolation
-method_name = "iterError_1-5-10"
-use_derivative_interpolation = False     # Use derivative interpolation
-keypoint_method = 'adaptiveJerk'         # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
-minN = 2                                # Minimum interval between key-points   
-maxN = 20                               # Maximum interval between key-points
+method_name = "Baseline"
+use_derivative_interpolation = True     # Use derivative interpolation
+keypoint_method = 'setInterval'         # 'setInterval, or 'adaptiveJerk' or 'iterativeError' or 'magvelChange'
+minN = 1                                # Minimum interval between key-points   
+maxN = 5                                # Maximum interval between key-points
 jerk_threshold = 0.3                    # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
 iterative_error_threshold = 10000       # Error threshold to trigger new key-point (only used in iterativeError)
+vel_change_threshold = 0.15             # Velocity change threshold to trigger new key-point (only used in magvelChange)
 
 # MPC parameters
 num_resolves = 100  # total number of times to resolve the optimizaiton problem
@@ -167,15 +168,7 @@ num_steps = int(T/dt)
 #Setup testing loop
 
 if use_derivative_interpolation:
-    interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)]
-
-    # interpolation_methods = []
-    # minN = [1, 5, 20]
-    # maxN = [2, 10, 20]
-    # iter_errors = [0.2, 10, 10]
-    # for i in range(len(minN)):
-    #     # interpolation_methods.append(utils_derivs_interpolation.derivs_interpolation("setInterval", minN[i], 0, 0, 0))
-    #     interpolation_methods.append(utils_derivs_interpolation.derivs_interpolation("iterativeError", minN[i], maxN[i], 0, iter_errors[i]))
+    interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold, vel_change_threshold)]
 else:
     interpolation_methods = None
 ilqr = IterativeLinearQuadraticRegulator(system_, num_steps, 
@@ -185,6 +178,7 @@ ilqr = IterativeLinearQuadraticRegulator(system_, num_steps,
 ilqr.SetTargetState(x_nom)
 ilqr.SetRunningCost(dt*Q, dt*R)
 ilqr.SetTerminalCost(Qf)
+ilqr.SetTaskName('mini_cheetah')
 
 # Set initial guess
 u_guess = np.repeat(u_stand[np.newaxis].T,num_steps-1,axis=1)
@@ -240,11 +234,11 @@ for i in range(num_resolves):
 solve_time = time.time() - st
 print(f"Solved in {solve_time} seconds using iLQR")
 # IPython.embed()
-# cost = 0
-# for i in range(len(x)):
-#     cost += (x[:,i]-x_nom).T@Q@(x[:,i]-x_nom) + u[:,i].T@R@u[:,i]
+cost = 0
+for i in range(len(x)):
+    cost += (x[:,i]-x_nom).T@Q@(x[:,i]-x_nom) + u[:,i].T@R@u[:,i]
 
-# print(f"Total cost: {cost}")
+print(f"Total cost: {cost}")
 print(f'costs {costs}')
 print(f'saved_iterations {saved_iterations}')
 sum_cost = np.sum(costs)

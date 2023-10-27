@@ -7,6 +7,7 @@ class derivs_interpolation:
     maxN: int
     jerk_threshold: float
     iterative_error_threshold: float
+    velChange_threshold: float
 
 @dataclass
 class index_tuple:

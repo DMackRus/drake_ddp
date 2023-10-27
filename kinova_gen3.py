@@ -20,7 +20,7 @@ playback = True    # Visualize the optimal trajectory by playing it back.
                    # If optimize=False, attempts to load a previously saved
                    # trajectory from a file.
 
-scenario = "side"   # "lift", "forward", or "side"
+scenario = "lift"   # "lift", "forward", or "side"
 save_file = scenario + ".npz"
 
 meshcat_visualisation = False
@@ -35,11 +35,12 @@ playback_rate = 0.125
 
 # Parameters for derivative interpolation
 use_derivative_interpolation = True         # Use derivative interpolation
-keypoint_method = 'adaptiveJerk'            # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
-minN = 1                                    # Minimum interval between key-points   
-maxN = 5                                   # Maximum interval between key-points
-jerk_threshold = 1e-1                      # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
+keypoint_method = 'magvelChange'            # 'setInterval, or 'adaptiveJerk' or 'iterativeError' or 'magvelChange'
+minN = 2                                    # Minimum interval between key-points   
+maxN = 5                                    # Maximum interval between key-points
+jerk_threshold = 0.8                        # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
 iterative_error_threshold = 1000            # Error threshold to trigger new key-point (only used in iterativeError)
+magvel_change_threshold = 0.1               # Magnitude of velocity change to trigger new key-point (only used in magvelChange)
 
 # Some useful joint angle definitions
 q_home = np.pi/180*np.array([0, 15, 180, 230, 0, 55, 90])
@@ -253,7 +254,7 @@ if optimize:
 
     
     if use_derivative_interpolation:
-        interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)]
+        interpolation_methods = [utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold, magvel_change_threshold)]
 
     else:
         interpolation_methods = None

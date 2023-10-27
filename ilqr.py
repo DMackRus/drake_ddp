@@ -11,6 +11,7 @@ import utils_derivs_interpolation
 import csv
 import os
 import matplotlib.pyplot as plt
+import IPython
 
 class IterativeLinearQuadraticRegulator():
     """
@@ -87,7 +88,7 @@ class IterativeLinearQuadraticRegulator():
 
         # -------------------------------- Derivatives interpolation  --------------------------------------
 
-        self.saveFileStartIndex = 77
+        self.saveFileStartIndex = 0
 
         self.fx_baseline = np.zeros((self.n,self.n,self.N-1))
         self.fu_baseline = np.zeros((self.n,self.m,self.N-1))
@@ -110,6 +111,7 @@ class IterativeLinearQuadraticRegulator():
         self.initialCost = None
         self.save_trajecInfo = True
         self.taskName = "blankTask"
+        self.saveIndex = 0
 
     def SetTaskName(self, taskName):
         self.taskName = taskName
@@ -269,7 +271,10 @@ class IterativeLinearQuadraticRegulator():
         """
         # Create autodiff versions of x and u
         xu = np.hstack([x,u])
+
+        # If no specified columns, compute all of the colums of fx and fu
         xu_ad = InitializeAutoDiff(xu)
+        
         x_ad = xu_ad[:self.n]
         u_ad = xu_ad[self.n:]
 
@@ -427,6 +432,8 @@ class IterativeLinearQuadraticRegulator():
         elif(interpolation_method.keypoint_method == 'iterativeError'):
             keyPoints = self.get_keypoints_iterative_error(x, u, interpolation_method)
             self.deriv_calculated_at_index = [False] * self.N
+        elif(interpolation_method.keypoint_method == 'magvelChange'):
+            keyPoints = self.get_keypoints_magvel_change(x, u, interpolation_method)
         else:
             raise Exception('unknown interpolation method')
 
@@ -529,6 +536,92 @@ class IterativeLinearQuadraticRegulator():
                 jerk[t, i] = acell1 - acell2
                 
         return jerk
+
+    def calc_vel_profile(self, x):
+        """
+        Calculates the velocity profile for each
+        degree of freedom over the trajectory
+
+        Returns:    vel_profile:   velocity profile over the trajectory for each dof
+        """
+        dof = int(self.n/2)
+        vel_profile = np.zeros((self.N-1, dof))
+
+        for i in range(dof):
+            for t in range(self.N-1):
+                vel_profile[t, i] = x[i + dof, t]
+                
+        return vel_profile
+
+    
+    def get_keypoints_magvel_change(self, x, u, interpolation_method):
+        """
+        Calculates keypoints at which to calcualte derivatives by tracking the change
+        in velocities for different dofs in the system. If the change goes above some threshold
+        then a keypoint is added.
+
+        Updates:
+            fx:      at certain timesteps
+            fu:      at certain timesteps
+        Returns:
+            keypoints:  list of keypoints to compute dynamics gradients at via autodiff
+        """
+        keypoints = []
+
+        dof = int(self.n/2)
+        velProfile = self.calc_vel_profile(x)
+
+        lastVelCounter = np.zeros((dof))
+        lastVelDirection = np.zeros((dof))
+        counter = 0
+
+        for i in range(dof):
+            lastVelCounter[i] = velProfile[0, i]
+
+        keypoints.append(0)
+
+        
+
+        for t in range(len(velProfile)):
+            counter += 1
+            if counter >= interpolation_method.minN:
+                for i in range(dof):
+                    currentVelDirection = velProfile[t, i] - velProfile[t-1, i]
+                    currentVelChange = velProfile[t, i] - lastVelCounter[i]
+
+                    # if(currentVelDirection * lastVelDirection[i] < 0):
+                    #     counter = 0
+                    #     keypoints.append(t)
+                    #     for i in range(dof):
+                    #         lastVelCounter[i] = velProfile[t, i]
+                    #         lastVelDirection[i] = velProfile[t, i] - velProfile[t-1, i]
+
+                    #     break
+
+                    if(currentVelChange > interpolation_method.velChange_threshold):
+                        counter = 0
+                        keypoints.append(t)
+                        for i in range(dof):
+                            lastVelCounter[i] = velProfile[t, i]
+                            lastVelDirection[i] = velProfile[t, i] - velProfile[t-1, i]
+
+                        break
+            
+            if counter >= interpolation_method.maxN:
+                keypoints.append(t)
+                counter = 0
+
+                for i in range(dof):
+                    lastVelCounter[i] = velProfile[t, i]
+                    lastVelDirection[i] = velProfile[t, i] - velProfile[t-1, i]
+
+                break
+
+            
+        if keypoints[-1] != self.N-2:
+            keypoints[-1] = self.N-2
+
+        return keypoints
 
     def get_keypoints_iterative_error(self, x, u, interpolation_method):
         """
@@ -788,7 +881,7 @@ class IterativeLinearQuadraticRegulator():
                 self.initialCost = L_new
 
             if self.save_trajecInfo:
-                self.saveTrajecInfo(self.taskName, iteration_num, self.fx, self.fu, self.x_bar, self.u_bar)
+                self.saveTrajecInfo(self.taskName, self.saveIndex, self.fx, self.fu, self.x_bar, self.u_bar)
 
             bp_time_start = time.time()
             self._backward_pass()
@@ -804,6 +897,7 @@ class IterativeLinearQuadraticRegulator():
             improvement = L - L_new
             L = L_new
             iteration_num += 1
+            self.saveIndex += 1
 
         return L, percent_derivs, iteration_num
 
@@ -837,6 +931,7 @@ class IterativeLinearQuadraticRegulator():
         save_index = index + self.saveFileStartIndex
 
         base_folder_name = f"savedTrajecInfo/{task}/{save_index}"
+        print(f"Saving trajectory information to {base_folder_name}")
 
         if(not os.path.exists(base_folder_name)):
             os.makedirs(base_folder_name)

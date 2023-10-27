@@ -28,8 +28,8 @@ target_vel = 1.00   # m/s
 
 # Parameters for derivative interpolation
 use_derivative_interpolation = True     # Use derivative interpolation
-keypoint_method = 'adaptiveJerk'        # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
-minN = 2                                # Minimum interval between key-points   
+keypoint_method = 'setInterval'        # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
+minN = 1                                # Minimum interval between key-points   
 maxN = 20                               # Maximum interval between key-points
 jerk_threshold = 0.3                    # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
 iterative_error_threshold = 10          # Error threshold to trigger new key-point (only used in iterativeError)
