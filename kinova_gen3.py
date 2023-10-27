@@ -20,7 +20,7 @@ playback = True    # Visualize the optimal trajectory by playing it back.
                    # If optimize=False, attempts to load a previously saved
                    # trajectory from a file.
 
-scenario = "lift"   # "lift", "forward", or "side"
+scenario = "forward"   # "lift", "forward", or "side"
 save_file = scenario + ".npz"
 
 meshcat_visualisation = False
@@ -39,8 +39,13 @@ keypoint_method = 'magvelChange'            # 'setInterval, or 'adaptiveJerk' or
 minN = 2                                    # Minimum interval between key-points   
 maxN = 5                                    # Maximum interval between key-points
 jerk_threshold = 0.8                        # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
-iterative_error_threshold = 1000            # Error threshold to trigger new key-point (only used in iterativeError)
-magvel_change_threshold = 0.1               # Magnitude of velocity change to trigger new key-point (only used in magvelChange)
+iterative_error_threshold = 800             # Error threshold to trigger new key-point (only used in iterativeError)
+magvel_change_threshold = 0.08               # Magnitude of velocity change to trigger new key-point (only used in magvelChange)
+
+# Testing parameters used in journal paper
+# magvel - 2, 5, 0.08
+# adaptiveJerk - 2, 5, 0.8
+#iterative error - 1, 5, 800
 
 # Some useful joint angle definitions
 q_home = np.pi/180*np.array([0, 15, 180, 230, 0, 55, 90])

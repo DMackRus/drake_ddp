@@ -11,7 +11,6 @@ import utils_derivs_interpolation
 import csv
 import os
 import matplotlib.pyplot as plt
-import IPython
 
 class IterativeLinearQuadraticRegulator():
     """
@@ -109,7 +108,7 @@ class IterativeLinearQuadraticRegulator():
             self.derivs_interpolation = derivs_keypoint_methods
 
         self.initialCost = None
-        self.save_trajecInfo = True
+        self.save_trajecInfo = False
         self.taskName = "blankTask"
         self.saveIndex = 0
 

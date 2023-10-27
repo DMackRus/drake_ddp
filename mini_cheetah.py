@@ -12,7 +12,6 @@ import numpy as np
 from pydrake.all import *
 from ilqr import IterativeLinearQuadraticRegulator
 import utils_derivs_interpolation
-import IPython
 import csv
 
 meshcat_visualisation = False
@@ -27,14 +26,19 @@ playback_rate = 0.2
 target_vel = 1.00   # m/s
 
 # Parameters for derivative interpolation
-method_name = "Baseline"
+method_name = "adaptiveJerk"
 use_derivative_interpolation = True     # Use derivative interpolation
-keypoint_method = 'setInterval'         # 'setInterval, or 'adaptiveJerk' or 'iterativeError' or 'magvelChange'
-minN = 1                                # Minimum interval between key-points   
+keypoint_method = 'adaptiveJerk'      # 'setInterval, or 'adaptiveJerk' or 'iterativeError' or 'magvelChange'
+minN = 2                                # Minimum interval between key-points   
 maxN = 5                                # Maximum interval between key-points
 jerk_threshold = 0.3                    # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
-iterative_error_threshold = 10000       # Error threshold to trigger new key-point (only used in iterativeError)
+iterative_error_threshold = 4000        # Error threshold to trigger new key-point (only used in iterativeError)
 vel_change_threshold = 0.15             # Velocity change threshold to trigger new key-point (only used in magvelChange)
+
+# Parameters for MPC testing for paper are:
+# adaptive jerk - minN = 2, maxN = 5, jerk_threshold = 0.3
+# iterative error - minN = 1, maxN = 5, iterative_error_threshold = 4000
+# magvel change - minN = 2, maxN = 5, vel_change_threshold = 0.15
 
 # MPC parameters
 num_resolves = 100  # total number of times to resolve the optimizaiton problem
