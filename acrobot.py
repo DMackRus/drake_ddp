@@ -20,7 +20,7 @@ T = 3           # total simulation time (S)
 dt = 0.004      # simulation timestep
 
 # Parameters for derivative interpolation
-use_derivative_interpolation = False    # Use derivative interpolation
+use_derivative_interpolation = True    # Use derivative interpolation
 keypoint_method = 'adaptiveJerk'        # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
 minN = 5                                # Minimum interval between key-points   
 maxN = 100                              # Maximum interval between key-points
@@ -31,7 +31,7 @@ iterative_error_threshold = 0.00005     # Error threshold to trigger new key-poi
 # must be "ilqr" or "sqp"
 method = "ilqr"
 MPC = False                         # MPC only works with ilqr for now
-meshcat_visualisation = False        # Visualisation with meshcat or drake visualizer
+meshcat_visualisation = True        # Visualisation with meshcat or drake visualizer
 
 # Initial state
 x0 = np.array([0,0,0,0])
@@ -115,7 +115,7 @@ if method == "ilqr":
         interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
     else:
         interpolation_method = None
-    ilqr = IterativeLinearQuadraticRegulator(plant_, num_steps, 
+    ilqr = IterativeLinearQuadraticRegulator(plant_, None, num_steps, 
             input_port_index=input_port_index,
             beta=0.5, derivs_keypoint_method = interpolation_method)
 

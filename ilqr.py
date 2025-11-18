@@ -8,6 +8,7 @@ from pydrake.all import *
 import time
 import numpy as np
 import utils_derivs_interpolation
+from IPython import embed
 
 class IterativeLinearQuadraticRegulator():
     """
@@ -18,7 +19,7 @@ class IterativeLinearQuadraticRegulator():
 
     using iLQR.
     """
-    def __init__(self, system, num_timesteps, 
+    def __init__(self, system, plant, num_timesteps, 
             input_port_index=0, delta=1e-2, beta=0.95, gamma=0.0, derivs_keypoint_method = None):
         """
         Args:
@@ -41,6 +42,8 @@ class IterativeLinearQuadraticRegulator():
         self.system = system
         self.context = self.system.CreateDefaultContext()
         self.input_port = self.system.get_input_port(input_port_index)
+        
+        self.plant = plant
 
         # Autodiff copy of the system for computing dynamics gradients
         self.system_ad = system.ToAutoDiffXd()
@@ -81,6 +84,8 @@ class IterativeLinearQuadraticRegulator():
         # Coefficents Qu'*Quu^{-1}*Qu for computing the expected 
         # reduction in cost dV = sum_t eps*(1-eps/2)*Qu'*Quu^{-1}*Qu
         self.dV_coeff = np.zeros(self.N-1)
+        
+        self.initial_cost = None
 
         # -------------------------------- Derivatives interpolation  --------------------------------------
 
@@ -95,7 +100,7 @@ class IterativeLinearQuadraticRegulator():
 
         # If no derivs_interpolation specified - use the baseline case (setInterval1 - computing derivatives at every time-step)
         if derivs_keypoint_method is None:
-            self.derivs_interpolation = utils_derivs_interpolation.derivs_interpolation('setInterval', 1, 0, 0, 0)
+            self.derivs_interpolation = utils_derivs_interpolation.derivs_interpolation('set_interval', 1, 0, 0, 0)
         else:
             self.derivs_interpolation = derivs_keypoint_method
 
@@ -301,6 +306,8 @@ class IterativeLinearQuadraticRegulator():
         n_iters = 0
         while eps >= 1e-8:
             n_iters += 1
+            
+            num_contacts_per_timestep = []
 
             # Simulate system forward using the given eps value
             L = 0
@@ -314,6 +321,15 @@ class IterativeLinearQuadraticRegulator():
                    
                 try:
                     x[:,t+1] = self._calc_dynamics(x[:,t], u[:,t])
+                    
+                    self.context.SetDiscreteState(x[:,t+1])
+                    plant_context = (self.system.GetSubsystemContext(self.plant, self.context)
+                                    if not isinstance(self.system, MultibodyPlant)
+                                    else self.context)
+                    contact_results = self.plant.get_contact_results_output_port().Eval(plant_context)
+
+                    # Store number of point contacts
+                    num_contacts_per_timestep.append(contact_results.num_hydroelastic_contacts())
                 except RuntimeError as e:
                     # If dynamics are infeasible, consider the loss to be infinite 
                     # and stop simulating. This will lead to a reduction in eps
@@ -324,12 +340,18 @@ class IterativeLinearQuadraticRegulator():
 
                 L += (x[:,t]-self.x_nom).T@self.Q@(x[:,t]-self.x_nom) + u[:,t].T@self.R@u[:,t]
                 expected_improvement += -eps*(1-eps/2)*self.dV_coeff[t]
+                
+                # --- Compute number of contacts at this timestep ---
+                # Make sure plant context is updated with new state
+                
+    
+    
             L += (x[:,-1]-self.x_nom).T@self.Qf@(x[:,-1]-self.x_nom)
 
             # Chech whether the improvement is sufficient
             improvement = L_last - L
             if improvement > self.gamma*expected_improvement:
-                return eps, x, u, L, n_iters
+                return eps, x, u, L, n_iters, num_contacts_per_timestep
 
             # Otherwise reduce eps by a factor of beta
             eps *= self.beta
@@ -362,22 +384,32 @@ class IterativeLinearQuadraticRegulator():
         """
         # Do linesearch to determine eps
         timeStart = time.time()
-        eps, x, u, L, ls_iters = self._linesearch(L_last)
+        eps, x, u, L, ls_iters, num_contacts_per_timestep = self._linesearch(L_last)
         timeEnd = time.time()
         self.time_fp = timeEnd - timeStart
-
-        timeStart = time.time()
-        self._get_derivatives(x, u)
-        timeEnd = time.time()
-        self.time_getDerivs = timeEnd - timeStart
 
         # Update stored values
         self.u_bar = u
         self.x_bar = x
+        
+        # for t in range(len(num_contacts_per_timestep)):
+        #     print("Timestep ", t, ": ", num_contacts_per_timestep[t])
+        
+        # Compute the contact list over the trajectory
+        # contacts = self.GetContactListForNominalTrajectory()
+        # for t in range(len(contacts)):
+        #     print("Timestep ", t, ": ", contacts[t].num_hydroelastic_contacts())
+        # embed()
+        # print(contacts)
+        
+        timeStart = time.time()
+        self._get_derivatives(x, u, num_contacts_per_timestep)
+        timeEnd = time.time()
+        self.time_getDerivs = timeEnd - timeStart
 
         return L, eps, ls_iters
 
-    def _get_derivatives(self, x, u):
+    def _get_derivatives(self, x, u, contact_list):
         """
         Calculates the derivatives fx and fu over the entire trajectory. Depending on 
         the keypoint method specified, this function will calculate a set of keypoints.
@@ -393,26 +425,30 @@ class IterativeLinearQuadraticRegulator():
 
         # Calculate keypoints over the trajectory
         keyPoints = []
-        if(self.derivs_interpolation.keypoint_method == 'setInterval'):
+        if(self.derivs_interpolation.keypoint_method == 'set_interval'):
             keyPoints = self.get_keypoints_set_interval()
-        elif(self.derivs_interpolation.keypoint_method == 'adaptiveJerk'):
+        elif(self.derivs_interpolation.keypoint_method == 'adaptive_jerk'):
             keyPoints = self.get_keypoints_adaptive_jerk(x, u)
-        elif(self.derivs_interpolation.keypoint_method == 'iterativeError'):
+        elif(self.derivs_interpolation.keypoint_method == 'iterative_error'):
             keyPoints = self.get_keypoints_iterative_error(x, u)
             self.deriv_calculated_at_index = [False] * self.N
+        elif(self.derivs_interpolation.keypoint_method == 'contact_change'):
+            keyPoints = self.get_keypoints_contact_change(contact_list)
         else:
+            print("Keypoint method: ", self.derivs_interpolation.keypoint_method, " not recognised!")
             raise Exception('unknown interpolation method')
 
         self.percentage_derivs = (len(keyPoints) / (self.N - 1)) * 100
 
         # Calculate derivatives at keypoints (iterative error method will have already done this)
-        if self.derivs_interpolation.keypoint_method != 'iterativeError':
+        if self.derivs_interpolation.keypoint_method != 'iterative_error':
             for t in range(len(keyPoints)):
                 self.fx[:,:,keyPoints[t]], self.fu[:,:,keyPoints[t]] = self._calc_dynamics_partials(x[:,keyPoints[t]], u[:,keyPoints[t]])
 
         # Interpolate derivatives if required (Interpolation not needed in baseline case (setInterval1))
-        if not (self.derivs_interpolation.keypoint_method == 'setInterval' and self.derivs_interpolation.minN == 1):
+        if not (self.derivs_interpolation.keypoint_method == 'set_interval' and self.derivs_interpolation.minN == 1):
             self.interpolate_derivatives(keyPoints)
+            print("Interpolate called")
 
     def get_keypoints_set_interval(self):
         """
@@ -429,6 +465,28 @@ class IterativeLinearQuadraticRegulator():
         if keypoints[-1] != self.N-2:
             keypoints[-1] = self.N-2
 
+        return keypoints
+    
+    def get_keypoints_contact_change(self, contact_list):
+        """
+        Computes keypoints over the trajectory when contact changes - determined by increase or decrease in number of contacts
+        
+        Returns:
+            keypoints:  list of keypoints to compute dynamics gradients at via autodiff
+        """
+        keypoints = []
+        
+        keypoints.append(0)
+        
+        # Loop from start to end of trajectory - if num contacts changes - place a keypoint
+        for t in range(1, len(contact_list)):
+            if contact_list[t] != contact_list[t-1]:
+                keypoints.append(t)
+                
+        if keypoints[-1] != self.N-2:
+            keypoints[-1] = self.N-2
+        
+        
         return keypoints
 
     def get_keypoints_adaptive_jerk(self, x, u):
@@ -603,7 +661,7 @@ class IterativeLinearQuadraticRegulator():
             fu:      dynamcis partial wrt control at each timestep
         """
 
-        # Interpoalte whole matrices
+        # Interpolate whole matrices
         for i in range(len(keyPoints) - 1):
             startIndex = keyPoints[i]
             endIndex = keyPoints[i+1]
@@ -665,6 +723,36 @@ class IterativeLinearQuadraticRegulator():
             # Update gradient and hessian of cost-to-go
             Vx = Qx - Qu.T@Quu_inv@Qux
             Vxx = Qxx - Qux.T@Quu_inv@Qux
+            
+    def GetContactListForNominalTrajectory(self):
+        contact_list = []
+
+        is_diagram = not isinstance(self.system, MultibodyPlant)
+
+        for t in range(1, self.N):
+            
+            # Set nominal state
+            self.context.SetDiscreteState(self.x_bar[:, t])
+            if t < self.N - 1:
+                self.input_port.FixValue(self.context, self.u_bar[:, t])
+
+            # --- Get plant context ---
+            if is_diagram:
+                plant_context = self.system.GetSubsystemContext(self.plant, self.context)
+                print("Here?")
+            else:
+                plant_context = self.context
+
+            # --- Evaluate plant contact results ---
+            contact_results = (
+                self.plant.get_contact_results_output_port().Eval(plant_context)
+            )
+
+            contact_list.append(contact_results)
+            
+
+        return contact_list
+
 
     def Solve(self):
         """
@@ -676,10 +764,13 @@ class IterativeLinearQuadraticRegulator():
             u:              (m,N-1) numpy array containing optimal control tape
             solve_time:     Total solve time in seconds
             optimal_cost:   Total cost associated with the (locally) optimal solution
+            cost_reduction: Proportion of cost reduction from initial cost to optimal cost
         """
         # Store total cost and improvement in cost
         L = np.inf
         improvement = np.inf
+        
+        print("Solving with keypoint method :", self.derivs_interpolation.keypoint_method)
 
         # Print labels for debug info
         print("----------------------------------------------------------------------------------------------------------------------------------")
@@ -693,6 +784,10 @@ class IterativeLinearQuadraticRegulator():
             st_iter = time.time()
 
             L_new, eps, ls_iters = self._forward_pass(L)
+            
+            if(self.initial_cost is None):
+                self.initial_cost = L_new
+                
             bp_time_start = time.time()
             self._backward_pass()
             bp_end_time = time.time()
@@ -706,8 +801,16 @@ class IterativeLinearQuadraticRegulator():
             improvement = L - L_new
             L = L_new
             i += 1
+            
+        cost_reduction = 1 - (L / self.initial_cost)
+        
+        self.num_iterations = i - 1
+        self.average_percent_derivs = self.percentage_derivs    # TODO - not the average yet
 
-        return self.x_bar, self.u_bar, total_time, L
+        return self.x_bar, self.u_bar, total_time, L, cost_reduction
+    
+    def GetConvergenceInfo(self):
+        return self.num_iterations, self.average_percent_derivs
 
     def SaveSolution(self, fname):
         """

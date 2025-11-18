@@ -9,6 +9,7 @@
 
 import time
 import numpy as np
+import os
 from pydrake.all import *
 from ilqr import IterativeLinearQuadraticRegulator
 import utils_derivs_interpolation
@@ -19,11 +20,12 @@ optimize = True    # Find an optimal trajectory using ilqr
 playback = True    # Visualize the optimal trajectory by playing it back.
                    # If optimize=False, attempts to load a previously saved
                    # trajectory from a file.
+gen_test_data = False # Generate test data for different key-point methods
 
 scenario = "side"   # "lift", "forward", or "side"
 save_file = scenario + ".npz"
 
-meshcat_visualisation = False
+meshcat_visualisation = True
 
 ####################################
 # Parameters
@@ -34,8 +36,8 @@ dt = 1e-2
 playback_rate = 0.125
 
 # Parameters for derivative interpolation
-use_derivative_interpolation = False    # Use derivative interpolation
-keypoint_method = 'adaptiveJerk'            # 'setInterval, or 'adaptiveJerk' or 'iterativeError'
+use_derivative_interpolation = True         # Use derivative interpolation
+keypoint_method = 'contact_change'            # 'set_interval, or 'adaptive_jerk' or 'iterative_error' or 'contact_change'
 minN = 5                                    # Minimum interval between key-points   
 maxN = 40                                   # Maximum interval between key-points
 jerk_threshold = 1e-4                       # Jerk threshold to trigger new key-point (only used in adaptiveJerk)
@@ -61,11 +63,16 @@ elif scenario == "side":
 else:
     raise RuntimeError("Unknown scenario %s"%scenario)
 
+
 # Initial state
 q_start = q_push
 if scenario == "lift":
     q_start = q_wrap
 x0 = np.hstack([q_start, q_ball_start, np.zeros(13)])
+
+num_tasks = 3
+#Random perurbation for task goals for gen_testing_data
+perturbations = np.random.normal(0, 0.001, num_tasks)
 
 # Target state
 x_nom = np.hstack([q_start, q_ball_target, np.zeros(13)])
@@ -236,6 +243,121 @@ diagram = builder.Build()
 diagram_context = diagram.CreateDefaultContext()
 plant_context = diagram.GetMutableSubsystemContext(plant, diagram_context)
 
+
+
+###################################
+# Generate test data for different key-point methods
+###################################
+
+if gen_test_data:
+    # Create a system model (w/o visualizer) to do the optimization over
+    builder_ = DiagramBuilder()
+    plant_, scene_graph_ = AddMultibodyPlantSceneGraph(builder_, dt)
+    plant_, scene_graph_ = create_system_model(plant_, scene_graph_)
+    builder_.ExportInput(plant_.get_actuation_input_port(), "control")
+    system_ = builder_.Build()
+
+    # Set up the optimizer
+    num_steps = int(T/dt)
+    
+    # Try different key-point methods
+    # key_point_methods = [utils_derivs_interpolation.derivs_interpolation('set_interval', 1, 10, jerk_threshold, iterative_error_threshold),
+    #                      utils_derivs_interpolation.derivs_interpolation('set_interval', 5, 10, jerk_threshold, iterative_error_threshold),
+    #                      utils_derivs_interpolation.derivs_interpolation('set_interval', 50, 10, jerk_threshold, iterative_error_threshold),
+    #                      utils_derivs_interpolation.derivs_interpolation('contact_change', 1, 1, jerk_threshold, iterative_error_threshold)]
+    
+    key_point_methods = [utils_derivs_interpolation.derivs_interpolation('set_interval', 5, 10, jerk_threshold, iterative_error_threshold)]
+    
+    
+    # all_cost_reductions = []
+    # all_optimisation_times = []
+    
+    # Loop through methods
+    for i, method in enumerate(key_point_methods):
+        print(f"Generating test data for key-point method {method}")
+    
+        
+        method_cost_reductions = []
+        method_final_costs = []
+        method_optimisation_times = []
+        method_number_iterations = []
+        method_average_percent_derivs = []
+        
+        for task in range(num_tasks):
+            print(f"  Task {task+1} of {num_tasks}")
+            # Perturb the target state slightly for each task
+            
+            if scenario == "forward":
+                x_nom_perturbed = x_nom.copy()
+                x_nom_perturbed[7+4] += perturbations[task]
+            elif scenario == "side":
+                x_nom_perturbed = x_nom.copy()
+                x_nom_perturbed[7+5] += perturbations[task]
+            elif scenario == "lift":
+                x_nom_perturbed = x_nom.copy()
+                x_nom_perturbed[7+6] += perturbations[task]
+            else:
+                raise RuntimeError("Unknown scenario %s"%scenario)
+            
+            
+            ilqr = IterativeLinearQuadraticRegulator(system_, plant_, num_steps, 
+                beta=0.5, delta=1e-3, gamma=0, derivs_keypoint_method = method)
+
+            # Define the optimization problem
+            ilqr.SetInitialState(x0)
+            ilqr.SetTargetState(x_nom_perturbed)
+            ilqr.SetRunningCost(dt*Q, dt*R)
+            ilqr.SetTerminalCost(Qf)
+
+            # Set initial guess
+            plant.SetPositionsAndVelocities(plant_context, x0)
+            tau_g = -plant.CalcGravityGeneralizedForces(plant_context)
+            S = plant.MakeActuationMatrix().T
+            u_gravity_comp = S@np.repeat(tau_g[np.newaxis].T, num_steps-1, axis=1)
+
+            #u_guess = np.zeros((plant.num_actuators(),num_steps-1))
+            u_guess = u_gravity_comp
+            ilqr.SetInitialGuess(u_guess)
+
+            # Solve the optimization problem
+            states, inputs, solve_time, optimal_cost, cost_reduction = ilqr.Solve()
+            
+            num_iterations, average_percentage_derivs = ilqr.GetConvergenceInfo()
+            
+            method_cost_reductions.append(cost_reduction)
+            method_final_costs.append(optimal_cost)
+            method_optimisation_times.append(solve_time)
+            method_number_iterations.append(num_iterations)
+            method_average_percent_derivs.append(average_percentage_derivs)
+            
+            
+        if method.keypoint_method == 'set_interval':
+            method_name = f"SI{method.minN}"
+        else:
+            method_name = f"{method.keypoint_method}"
+        data_filename = f"TestingData/iLQR_AD/{method_name}/summary.csv"
+        
+        output_dir = f"TestingData/iLQR_AD/{method_name}"
+        data_filename = os.path.join(output_dir, "summary.csv")
+
+        # Create directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+
+        # If the file does not exist, write header
+        write_header = not os.path.exists(data_filename)
+
+        # Append data
+        with open(data_filename, 'w') as f:
+            f.write("Cost reduction,Final cost,Optimisation time (ms),Number iterations,Average percent derivs\n")
+            for i in range(num_tasks):
+                cost_reduction = method_cost_reductions[i]
+                final_cost = method_final_costs[i]
+                solve_time = method_optimisation_times[i]
+                num_iterations = method_number_iterations[i]
+                average_percentage_derivs = method_average_percent_derivs[i]
+                f.write(f"{cost_reduction},{final_cost},{solve_time},{num_iterations},{average_percentage_derivs}\n")
+    
+
 ####################################
 # Solve Trajectory Optimization
 ####################################
@@ -255,9 +377,10 @@ if optimize:
         interpolation_method = utils_derivs_interpolation.derivs_interpolation(keypoint_method, minN, maxN, jerk_threshold, iterative_error_threshold)
     else:
         interpolation_method = None
-    ilqr = IterativeLinearQuadraticRegulator(system_, num_steps, 
+    ilqr = IterativeLinearQuadraticRegulator(system_, plant_, num_steps, 
             beta=0.5, delta=1e-3, gamma=0, derivs_keypoint_method = interpolation_method)
 
+    x_nom[7+5] += perturbations[0]
     # Define the optimization problem
     ilqr.SetInitialState(x0)
     ilqr.SetTargetState(x_nom)
@@ -275,13 +398,15 @@ if optimize:
     ilqr.SetInitialGuess(u_guess)
 
     # Solve the optimization problem
-    states, inputs, solve_time, optimal_cost = ilqr.Solve()
+    states, inputs, solve_time, optimal_cost, cost_reduction = ilqr.Solve()
     print(f"Solved in {solve_time} seconds using iLQR")
     print(f"Optimal cost: {optimal_cost}")
     timesteps = np.arange(0.0,T,dt)
 
     # save the solution
     ilqr.SaveSolution(save_file)
+
+
 
 #####################################
 # Playback
