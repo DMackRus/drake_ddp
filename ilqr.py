@@ -86,6 +86,10 @@ class IterativeLinearQuadraticRegulator():
         self.dV_coeff = np.zeros(self.N-1)
         
         self.initial_cost = None
+        self.cost_reductions = []
+        self.trajectory_costs = []
+        self.iteration_timings = []
+        self.percentage_derivs = []
 
         # -------------------------------- Derivatives interpolation  --------------------------------------
 
@@ -330,6 +334,9 @@ class IterativeLinearQuadraticRegulator():
 
                     # Store number of point contacts
                     num_contacts_per_timestep.append(contact_results.num_hydroelastic_contacts())
+                    
+                    L += (x[:,t]-self.x_nom).T@self.Q@(x[:,t]-self.x_nom) + u[:,t].T@self.R@u[:,t]
+                    expected_improvement += -eps*(1-eps/2)*self.dV_coeff[t]
                 except RuntimeError as e:
                     # If dynamics are infeasible, consider the loss to be infinite 
                     # and stop simulating. This will lead to a reduction in eps
@@ -337,13 +344,6 @@ class IterativeLinearQuadraticRegulator():
                     #print(e)
                     L = np.inf
                     break
-
-                L += (x[:,t]-self.x_nom).T@self.Q@(x[:,t]-self.x_nom) + u[:,t].T@self.R@u[:,t]
-                expected_improvement += -eps*(1-eps/2)*self.dV_coeff[t]
-                
-                # --- Compute number of contacts at this timestep ---
-                # Make sure plant context is updated with new state
-                
     
     
             L += (x[:,-1]-self.x_nom).T@self.Qf@(x[:,-1]-self.x_nom)
@@ -355,8 +355,12 @@ class IterativeLinearQuadraticRegulator():
 
             # Otherwise reduce eps by a factor of beta
             eps *= self.beta
+            
+        print("LInesearch failed - converging to last solution")
+        
+        return None, None, None, None, None, None
 
-        raise RuntimeError("linesearch failed after %s iterations"%n_iters)
+        # raise RuntimeError("linesearch failed after %s iterations"%n_iters)
     
     def _forward_pass(self, L_last):
         """
@@ -382,26 +386,23 @@ class IterativeLinearQuadraticRegulator():
             eps:        Linesearch parameter used
             ls_iters:   Number of linesearch iterations
         """
+        print("forward pass starts")
+        
         # Do linesearch to determine eps
         timeStart = time.time()
         eps, x, u, L, ls_iters, num_contacts_per_timestep = self._linesearch(L_last)
         timeEnd = time.time()
         self.time_fp = timeEnd - timeStart
+        
+        if(eps is None):
+            # Linesearch failed - return last known values
+            return L_last, 0, 0
 
         # Update stored values
         self.u_bar = u
         self.x_bar = x
-        
-        # for t in range(len(num_contacts_per_timestep)):
-        #     print("Timestep ", t, ": ", num_contacts_per_timestep[t])
-        
-        # Compute the contact list over the trajectory
-        # contacts = self.GetContactListForNominalTrajectory()
-        # for t in range(len(contacts)):
-        #     print("Timestep ", t, ": ", contacts[t].num_hydroelastic_contacts())
-        # embed()
-        # print(contacts)
-        
+
+        print("Get derivatives start")
         timeStart = time.time()
         self._get_derivatives(x, u, num_contacts_per_timestep)
         timeEnd = time.time()
@@ -788,6 +789,9 @@ class IterativeLinearQuadraticRegulator():
             if(self.initial_cost is None):
                 self.initial_cost = L_new
                 
+            self.cost_reductions.append(1 - (L_new / self.initial_cost))
+            self.trajectory_costs.append(L_new)
+                
             bp_time_start = time.time()
             self._backward_pass()
             bp_end_time = time.time()
@@ -802,6 +806,8 @@ class IterativeLinearQuadraticRegulator():
             L = L_new
             i += 1
             
+            self.iteration_timings.append(total_time)
+            
         cost_reduction = 1 - (L / self.initial_cost)
         
         self.num_iterations = i - 1
@@ -811,6 +817,9 @@ class IterativeLinearQuadraticRegulator():
     
     def GetConvergenceInfo(self):
         return self.num_iterations, self.average_percent_derivs
+    
+    def GetIterationData(self):
+        return self.trajectory_costs, self.cost_reductions, self.iteration_timings
 
     def SaveSolution(self, fname):
         """
