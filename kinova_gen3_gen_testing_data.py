@@ -95,9 +95,9 @@ if scenario == "lift":
     q_start = q_wrap
 x0 = np.hstack([q_start, q_ball_start, np.zeros(13)])
 
-num_tasks = 5
+num_tasks = 10
 #Random perurbation for task goals for gen_testing_data
-petrubations_side = [0.001, 0.002, 0.003, -0.001, -0.002]
+petrubations_side = [0.000, 0.001, 0.002, 0.003, 0.004, 0.005, -0.001, -0.002, -0.003, -0.004]
 
 # perturbations_forwards = [0.01, -0.01, 0.015, -0.015, 0.0]
 # perturbations_lift = [0.005, -0.005, 0.01, -0.01, 0.0]
@@ -345,7 +345,7 @@ if gen_test_data:
         method_name = f"{keypoint_method.keypoint_method}"
     # data_filename = f"TestingData/iLQR_AD/{method_name}/{summary}.csv"
     
-    output_dir = f"TestingData/iLQR_AD/{method_name}/{task_number}"
+    output_dir = f"TestingData/iLQR_AD/Kinova_{scenario}/{method_name}/{task_number}"
     data_filename = os.path.join(output_dir, "summary.csv")
     
     # Create directory if it doesn't exist
@@ -364,9 +364,8 @@ if gen_test_data:
         method_name = f"SI{keypoint_method.minN}"
     else:
         method_name = f"{keypoint_method.keypoint_method}"
-    data_filename = f"TestingData/iLQR_AD/{method_name}/summary.csv"
     
-    output_dir = f"TestingData/iLQR_AD/{method_name}"
+    output_dir = f"TestingData/iLQR_AD/Kinova_{scenario}/{method_name}"
     data_filename = os.path.join(output_dir, "summary.csv")
 
     # Create directory if it doesn't exist
