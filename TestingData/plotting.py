@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-ORDER = ["SI1", "SI5", "SI1000", "contact_change"]
+ORDER = ["SI1", "SI5", "SI1000", "contact_change", "contact_change_dyn", "contact_change_maxN"]
 
 
 def load_data(task_name, base_dir="iLQR_AD"):
@@ -92,15 +92,15 @@ def plot_bars(results):
 
 
 def print_latex_table(results):
-    print("\n================ LATEX TABLE =================")
+    # print("\n================ LATEX TABLE =================")
 
-    print("\nMethod & Cost Reduction (mean ± CI) & Time (ms) (mean ± CI) \\\\")
+    # print("\nMethod & Cost Reduction (mean ± CI) & Time (ms) (mean ± CI) \\\\")
     
     for method in ORDER:
         if method not in results:
             continue
 
-        print("{method} & ")
+        print(f"{method} & ", end=" ")
     print("\\\\")
 
     for method in ORDER:
@@ -114,30 +114,67 @@ def print_latex_table(results):
         
     print("\\\\")
 
-    print("==============================================\n")
+    # print("==============================================\n")
 
 
-def main(task_name, base_dir):
-    # Load raw data
-    data = load_data(task_name, base_dir)
-    if not data:
-        print("No valid data found.")
-        return
+def main(tasks, base_dir):
+    
+    for method in ORDER:
+        print(f"{method} & ", end=" ")
+    print("\\\\")
+    
+    # Compute averages across tasks
+    opt_time_averages = np.zeros((len(ORDER), len(tasks)))
+    cost_reduction_averages = np.zeros((len(ORDER), len(tasks)))
+    
+    for task_name in tasks:
+        # print(f"\n===== Processing Task: {task_name} =====")
+        # Load raw data
+        data = load_data(task_name, base_dir)
+        if not data:
+            print("No valid data found.")
+            return
 
-    # Compute summary statistics
-    results = compute_stats(data)
+        # Compute summary statistics
+        results = compute_stats(data)
 
-    # Plot bar charts
-    plot_bars(results)
+        # Plot bar charts
+        # plot_bars(results)
 
-    # Print LaTeX-friendly table
-    print_latex_table(results)
+        # Print LaTeX-friendly table
+        # print_latex_table(results)
+        
+        ######### Print LaTeX table #########
+        print(f"{task_name} & ", end=" ")
+
+        for method in ORDER:
+            if method not in results:
+                continue
+
+            cr_mean, cr_ci = results[method]["Task number Cost reduction"]
+            t_mean, t_ci = results[method]["Optimisation time (ms)"]
+            
+            opt_time_averages[ORDER.index(method), tasks.index(task_name)] = t_mean
+            cost_reduction_averages[ORDER.index(method), tasks.index(task_name)] = cr_mean
+            
+            print(f"{t_mean:.2f} & {cr_mean:.3f} $\pm$ {cr_ci:.3f} &", end=" ")
+            
+        print("\\\\")
+        
+    print("Average(ball)", end=" ")
+    for i in range(len(ORDER)):
+        avg_time = np.mean(opt_time_averages[i, :])
+        avg_cost = np.mean(cost_reduction_averages[i, :])
+        print(f"& {avg_time:.2f} & {avg_cost:.3f} ", end=" ")
+    print("\\\\")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("task", type=str, help="Task name")
-    parser.add_argument("--base", type=str, default="iLQR_AD")
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("task", type=str, help="Task name")
+    # parser.add_argument("--base", type=str, default="iLQR_AD")
+    # args = parser.parse_args()
+    
+    tasks = ["Kinova_side", "Kinova_forward", "Kinova_lift"]
 
-    main(args.task, args.base)
+    main(tasks, "iLQR_AD_single756")

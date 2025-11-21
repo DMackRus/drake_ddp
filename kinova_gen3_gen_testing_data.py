@@ -30,7 +30,9 @@ gen_test_data = True    # Generate test data for different key-point methods
 keypoint_methods = [utils_derivs_interpolation.derivs_interpolation('set_interval', 1, 10, 0, 0),
                          utils_derivs_interpolation.derivs_interpolation('set_interval', 5, 10, 0, 0),
                          utils_derivs_interpolation.derivs_interpolation('set_interval', 1000, 10, 0, 0),
-                         utils_derivs_interpolation.derivs_interpolation('contact_change', 1, 1, 0, 0)]
+                         utils_derivs_interpolation.derivs_interpolation('contact_change', 1, 1, 0, 0),
+                         utils_derivs_interpolation.derivs_interpolation('contact_change_dyn', 1, 1, 0, 0),
+                         utils_derivs_interpolation.derivs_interpolation('contact_change_maxN', 1, 20, 0, 0)]
 
 scenario = "side"   # "lift", "forward", or "side"
 save_file = scenario + ".npz"
@@ -95,9 +97,10 @@ if scenario == "lift":
     q_start = q_wrap
 x0 = np.hstack([q_start, q_ball_start, np.zeros(13)])
 
-num_tasks = 10
+num_tasks = 20
 #Random perurbation for task goals for gen_testing_data
-petrubations_side = [0.000, 0.001, 0.002, 0.003, 0.004, 0.005, -0.001, -0.002, -0.003, -0.004]
+petrubations_side = [0.000, 0.001, 0.002, 0.003, 0.004, 0.005, -0.001, -0.002, -0.003, -0.004,
+                     0.006, 0.007, 0.008, 0.009, 0.01, -0.005, -0.006, -0.007, -0.008, -0.009]
 
 # perturbations_forwards = [0.01, -0.01, 0.015, -0.015, 0.0]
 # perturbations_lift = [0.005, -0.005, 0.01, -0.01, 0.0]
@@ -318,6 +321,8 @@ if gen_test_data:
     ilqr.SetTargetState(x_nom_perturbed)
     ilqr.SetRunningCost(dt*Q, dt*R)
     ilqr.SetTerminalCost(Qf)
+    
+    ilqr.SetMaxIterations(2)
 
     # Set initial guess
     plant.SetPositionsAndVelocities(plant_context, x0)
@@ -343,9 +348,8 @@ if gen_test_data:
         method_name = f"SI{keypoint_method.minN}"
     else:
         method_name = f"{keypoint_method.keypoint_method}"
-    # data_filename = f"TestingData/iLQR_AD/{method_name}/{summary}.csv"
     
-    output_dir = f"TestingData/iLQR_AD/Kinova_{scenario}/{method_name}/{task_number}"
+    output_dir = f"TestingData/iLQR_AD_single/Kinova_{scenario}/{method_name}/{task_number}"
     data_filename = os.path.join(output_dir, "summary.csv")
     
     # Create directory if it doesn't exist
@@ -365,7 +369,7 @@ if gen_test_data:
     else:
         method_name = f"{keypoint_method.keypoint_method}"
     
-    output_dir = f"TestingData/iLQR_AD/Kinova_{scenario}/{method_name}"
+    output_dir = f"TestingData/iLQR_AD_single/Kinova_{scenario}/{method_name}"
     data_filename = os.path.join(output_dir, "summary.csv")
 
     # Create directory if it doesn't exist

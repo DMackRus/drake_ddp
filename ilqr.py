@@ -90,6 +90,9 @@ class IterativeLinearQuadraticRegulator():
         self.trajectory_costs = []
         self.iteration_timings = []
         self.percentage_derivs = []
+        
+        # Big number as default unless overwritten
+        self.max_iterations = 1000
 
         # -------------------------------- Derivatives interpolation  --------------------------------------
 
@@ -386,7 +389,6 @@ class IterativeLinearQuadraticRegulator():
             eps:        Linesearch parameter used
             ls_iters:   Number of linesearch iterations
         """
-        print("forward pass starts")
         
         # Do linesearch to determine eps
         timeStart = time.time()
@@ -402,7 +404,6 @@ class IterativeLinearQuadraticRegulator():
         self.u_bar = u
         self.x_bar = x
 
-        print("Get derivatives start")
         timeStart = time.time()
         self._get_derivatives(x, u, num_contacts_per_timestep)
         timeEnd = time.time()
@@ -434,7 +435,11 @@ class IterativeLinearQuadraticRegulator():
             keyPoints = self.get_keypoints_iterative_error(x, u)
             self.deriv_calculated_at_index = [False] * self.N
         elif(self.derivs_interpolation.keypoint_method == 'contact_change'):
-            keyPoints = self.get_keypoints_contact_change(contact_list)
+            keyPoints = self.get_keypoints_contact_change(contact_list, use_maxN=False, use_dyn=False)
+        elif(self.derivs_interpolation.keypoint_method == 'contact_change_maxN'):
+            keyPoints = self.get_keypoints_contact_change(contact_list, use_maxN=True, use_dyn=False)
+        elif(self.derivs_interpolation.keypoint_method == 'contact_change_dyn'):
+            keyPoints = self.get_keypoints_contact_change(contact_list, use_maxN=False, use_dyn=True)
         else:
             print("Keypoint method: ", self.derivs_interpolation.keypoint_method, " not recognised!")
             raise Exception('unknown interpolation method')
@@ -449,7 +454,6 @@ class IterativeLinearQuadraticRegulator():
         # Interpolate derivatives if required (Interpolation not needed in baseline case (setInterval1))
         if not (self.derivs_interpolation.keypoint_method == 'set_interval' and self.derivs_interpolation.minN == 1):
             self.interpolate_derivatives(keyPoints)
-            print("Interpolate called")
 
     def get_keypoints_set_interval(self):
         """
@@ -468,7 +472,7 @@ class IterativeLinearQuadraticRegulator():
 
         return keypoints
     
-    def get_keypoints_contact_change(self, contact_list):
+    def get_keypoints_contact_change(self, contact_list, use_maxN=False, use_dyn=False):
         """
         Computes keypoints over the trajectory when contact changes - determined by increase or decrease in number of contacts
         
@@ -484,9 +488,65 @@ class IterativeLinearQuadraticRegulator():
             if contact_list[t] != contact_list[t-1]:
                 keypoints.append(t)
                 
-        if keypoints[-1] != self.N-2:
-            keypoints[-1] = self.N-2
         
+        if keypoints[-1] != self.N-2:
+            keypoints.append(self.N-2)
+            
+        # print("Keypoints from contact changes: ", keypoints)
+            
+        # Loop through key-points list - if difference between two keypoints is greater than maxN - add extra keypoints in between
+        if use_maxN:
+            i = 0
+            while i < len(keypoints) - 1:
+                if keypoints[i+1] - keypoints[i] > self.derivs_interpolation.maxN:
+                    # Add extra keypoint
+                    new_keypoint = keypoints[i] + self.derivs_interpolation.maxN
+                    keypoints.insert(i+1, new_keypoint)
+                else:
+                    i += 1
+            # print("Keypoints after maxN processing: ", keypoints)
+        
+        # Check if robot positions velocities or controls change significantly since last key-point
+        robot_positions = self.x_bar[0:7, :]
+        robot_velocities = self.x_bar[7+self.n:14+self.n, :]
+        robot_controls = self.u_bar[0:7, :]
+        
+        #Temp code - print the robot positions trajectory
+        
+        if use_dyn:
+            #Loop over keypoints
+            i = 0
+            while i < len(keypoints) - 1:
+                #Loop over time-steps between key-points
+                significant_change = False
+                for t in range(keypoints[i]+1, keypoints[i+1]):
+                    pos_diff = np.linalg.norm(robot_positions[:, t] - robot_positions[:, keypoints[i]])
+                    vel_diff = np.linalg.norm(robot_velocities[:, t] - robot_velocities[:, keypoints[i]])
+                    ctrl_diff = np.linalg.norm(robot_controls[:, t] - robot_controls[:, keypoints[i]])
+                    
+                    if pos_diff > 0.2:
+                        # print("Position change detected at time ", t, " diff: ", pos_diff)
+                        significant_change = True
+                        break
+                    
+                    if vel_diff > 0.2:
+                        # print("Velocity change detected at time ", t, " diff: ", vel_diff)
+                        significant_change = True
+                        break
+                    
+                    if ctrl_diff > 10.0:
+                        # print("Control change detected at time ", t, " diff: ", ctrl_diff)
+                        significant_change = True
+                        break
+                    
+                #Add additional key-points
+                if significant_change:
+                    keypoints.insert(i+1, t)
+                    
+                i += 1
+                    
+            # print("Keypoints after dynamics processing: ", keypoints)
+                           
         
         return keypoints
 
@@ -740,7 +800,7 @@ class IterativeLinearQuadraticRegulator():
             # --- Get plant context ---
             if is_diagram:
                 plant_context = self.system.GetSubsystemContext(self.plant, self.context)
-                print("Here?")
+                # print("Here?")
             else:
                 plant_context = self.context
 
@@ -808,12 +868,20 @@ class IterativeLinearQuadraticRegulator():
             
             self.iteration_timings.append(total_time)
             
+            # Early termination critera when max iterations specifed
+            if i > self.max_iterations:
+                print("Reached maximum number of iterations")
+                break
+            
         cost_reduction = 1 - (L / self.initial_cost)
         
         self.num_iterations = i - 1
         self.average_percent_derivs = self.percentage_derivs    # TODO - not the average yet
 
         return self.x_bar, self.u_bar, total_time, L, cost_reduction
+    
+    def SetMaxIterations(self, max_iterations):
+        self.max_iterations = max_iterations
     
     def GetConvergenceInfo(self):
         return self.num_iterations, self.average_percent_derivs
